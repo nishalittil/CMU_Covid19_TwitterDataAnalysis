@@ -1,0 +1,901 @@
+
+---
+title: "Analysis of COVID-19 Tweets"
+author: "Nisha Mundanthara Suresh Babu"
+date: "01/02/2022"
+output:
+  html_document:
+    toc: true
+    number_sections: true
+    theme: journal
+ 
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+# *Introduction:*  {.tabset .tabset-fade .tabset-pills}
+Ever since World Health Organisation (WHO) declared Coronavirus a Public Emergency of International Concern (PEIC), social media sites like Twitter and Facebook have been bombarded with posts related to coronavirus. Even though social media has shown to be an effective tool for gauging public reactions to real-world events, proper analysis is required to project the true emotions of the public.This course work is trying to find out general trends and patterns of tweets by performing topic-based sentiment analysis on Twitter tweets by annotation.  
+
+## *Objective:* {.tabset .tabset-fade .tabset-pills}  
+This course work studies five research questions:     
+1. What high-level trends can be inferred from Covid19 tweets?   
+2. What are the sentiments and emotions on Twitter in relation to Covid?  
+3. What valence (sentiment polarity) emerges from the tweets about Covid?     
+4. What are the topics of interests?   
+5. Which topics are distinct from each other?  
+
+# *METHODS*   
+
+## *DATA EXTRACTION AND PREPROCESSING* {.tabset .tabset-fade .tabset-pills}  
+The dataset used in this course work is called `CMU-MisCOV19' and it comes from a research project at the Centre for Machine Learning and Health at Carnegie Mellon University. The authors used a diverse set of keywords to infer tweets via the Twitter search API. 17 categories were identified for the annotation process, and tweets were manually annotated.
+
+```{r, message=FALSE, warning=FALSE}
+#require(devtools)
+#install_github("lchiffon/wordcloud2", force = TRUE)
+#install.packages("RColorBrewer")
+#install.packages("webshot")
+#webshot::install_phantomjs()
+#install.packages("tm")
+#install.packages("SnowballC")
+#install.packages("wordcloud")
+#install.packages("RColorBrewer")
+#install.packages("ggplot2")
+#install.packages("tidyverse")
+#install.packages("tidytext")
+#install.packages("textstem")
+#install.packages("syuzhet")
+#install.packages("formattable")
+#install.packages("gridExtra")
+
+```
+
+
+```{r, message=FALSE, warning=FALSE}
+library(tm) #Text mining
+library(SnowballC) #Required for stemming
+library(RColorBrewer) #Required for color palettes
+library(wordcloud)
+library(devtools)
+library(wordcloud2)
+library(tidytext)
+library(dplyr) # Data wrangling
+library(ggplot2) # Visualise data.
+library(lubridate) # Dates and time.
+library(scales) # Format comma().
+library(stringi) # String concat operator %s+%.
+library(stringr) # String operations.
+library(tibble) # Convert row names into a column.
+library(tidyr) # Prepare a tidy dataset, gather().
+library(tidyverse)
+library(readr) # Efficient reading of CSV data.
+library(textstem)
+library(syuzhet)#sentiment scores
+library(textclean)#replace contractions
+library(forestmangr) #to use round_df
+library(RColorBrewer)
+library(webshot)
+library(reshape2)
+library(kableExtra) #create attractive tables
+library(formattable) #color tile and color bar in `kables`
+library(gridExtra)
+library(topicmodels)
+
+```
+ 
+  
+
+
+```{r ,message=FALSE, warning=FALSE}
+# Read the text file from storage
+dataset <- read_csv("CMU-MisCOV19(1).csv",show_col_types = FALSE)
+```
+
+Using the dim() function, you see that there are 3 columns and 3642 observations. Each observation is a tweet.
+We have three fields in the dataset. Status_id denoted the unique number identifying the tweet, text is the tweet and annotation is the category of the tweet. A random row of the dataset is shown below.  
+
+```{r ,message=FALSE, warning=FALSE}
+# Return dimension of the dataset
+dim(dataset)
+#Rreturn names of columns in the dataset
+names(dataset)
+#returns the entire 1024th row 
+glimpse(dataset[1024,])
+
+```
+
+### Data Cleaning
+
+The above tweet has many unwanted characters as well as hyperlinks. So it is critical that we pre-process the data before analysing it.    
+
+```{r,message=FALSE, warning=FALSE}
+#remove ampersand, greater-than and less-than characters,URLs and emoji from the text
+#Remove numbers
+#tokenise the text into a row per word format
+covid_tweets <- dataset %>%
+  mutate(text = str_remove_all(text, "&amp;|&lt;|&gt;"), 
+         text = str_remove_all(text, "\\s?(f|ht)(tp)(s?)(://)([^\\.]*)[\\.|/](\\S*)"),
+         text = replace_contraction(text),
+         text = removeNumbers(text),
+         text = str_remove_all(text, "[^\x01-\x7F]")) %>% 
+  unnest_tokens(word, text) 
+#REmove whitespace
+covid_tweets$word <- gsub("\\s+","",covid_tweets$word)
+#Remove underscore
+covid_tweets$word <- gsub("\\_","",covid_tweets$word)
+
+```
+
+str_remove_all from stringr library is used to remove the following from the actual text:  
+1.	&,< and > character.
+2.	URLs
+3.	Emojis
+
+Numbers are removed using the removeNumbers function from tm library. replace_contraction from textclean library is used to remove contractions in the real text.I have tokenised the text into a row per word format using unnest_tokens function. This function automatically converts capital letters to small letters. We can observe that some white spaces and underscore symbols are still in the text. So I have removed whitespace and underscores using gsub function. 
+
+```{r ,message=FALSE, warning=FALSE}
+# A user defined function for table printing
+my_kable_styling <- function(dat, caption) {
+  kable(dat, "html", escape = FALSE, caption = caption) %>%
+  kable_styling(bootstrap_options = c("striped", "condensed", "bordered"),
+                full_width = FALSE)
+}
+```
+
+```{r ,message=FALSE, warning=FALSE}
+# Tokenized words in the descending order of occurences. 
+covid_tweets %>%
+  count(word) %>%
+  arrange(desc(n)) 
+  # mutate(word = color_tile("lightblue", "lightblue")(word),
+     #    n = color_bar("lightpink")(n)) %>%
+#my_kable_styling(caption = "Words Found In Tweets")
+```
+
+The table shows the tokenized words in descending order of the number of occurrences. But most of them are common words which may not give any meaning to our results called stop words. Let’s remove them using anti_join.  To get the root meaning of the words I used lemmatize function. Finally the function distinct() is used to get rid of the duplicate records if any .
+
+```{r ,message=FALSE, warning=FALSE}
+#stopwords
+ data("stop_words")
+    covid_tweets<-covid_tweets %>%
+      anti_join(stop_words) %>%
+  distinct()
+#Lemmatizing
+covid_tweets <- covid_tweets %>%
+  mutate(word=lemmatize_words(word, dictionary = lexicon::hash_lemmas))
+```
+```{r}
+#Top 10 words in the tweets
+word_counts <- covid_tweets %>%
+  count(word, sort = TRUE)
+
+ggplot(word_counts[1:10,],aes(x=reorder(word,n), n,  fill = NULL)) +
+  geom_col() +
+  labs(x = NULL, y = "Word Count") +
+  ggtitle("Top 10 words") +
+  coord_flip()
+```
+The bar chart shows the top 10 words appeared in the tweets. COVID”, Coronavirus, “bleach”, “people”, “cure” and “immune” are the five most important words in the tweets.It’s been observed that covid,im,dont, coronavirus and virus are occurring more frequently. Since these words doesn’t contribute to the analysis let's remove them from further analysis.  
+
+The wordcloud below shows the importance of words appeared in the tweets. 
+
+
+```{r ,message=FALSE, warning=FALSE}
+#wordcloud
+
+wordcloud2(word_counts, color = "#b8860b", backgroundColor="black", shape = 'star')
+```
+
+```{r ,message=FALSE, warning=FALSE}
+# Removing unwanted words from the analysis
+custom_stop_words <- tribble(
+  # Column names should match stop_words
+  ~word, ~lexicon,
+  "coronavirus", "CUSTOM",
+  "corona", "CUSTOM",
+  "virus", "CUSTOM",
+  "covid", "CUSTOM",
+  "dont", "CUSTOM",
+  "im", "CUSTOM",
+  
+)
+
+ covid_tweets<-covid_tweets %>%
+      anti_join(custom_stop_words)
+ 
+
+```
+
+Now the data is clean and tidy.
+
+### Frequent words in tweets
+
+```{r ,message=FALSE, warning=FALSE}
+#Top 10 words after removing unwanted words.
+ word_counts1 <- covid_tweets %>%
+  count(word, sort = TRUE)
+word_counts1
+ 
+ barplot(word_counts1[1:10,]$n, las = 2, names.arg = word_counts1[1:10,]$word,
+        col ="#b8860b", main ="Most frequent words",
+        ylab = "Word frequencies")
+```
+The bar plot shows 10 most frequent words occurred in the tweets after the removal of unwanted words. The most frequently occurring word is “cure”. This indicates that most tweets hope for a cure for coronavirus. The words bleach, bioweapon, lmmune, conspiracy and fake indicates more people are talking about false fact or prevention. The words people and trump represent politics. mask represent true prevention techniques.  
+
+
+```{r ,message=FALSE, warning=FALSE}
+#Assocaiation between words
+dtm <-covid_tweets %>%
+    count(status_id, word) %>%
+    cast_tdm( word,status_id, n)
+m <- as.matrix(dtm)
+v <- sort(rowSums(m),decreasing=TRUE)
+d <- data.frame(word = names(v),freq=v)
+
+findAssocs(dtm, terms = findFreqTerms(dtm, lowfreq = 300), corlimit = 0.20)
+
+```
+### Word Association
+Word association is performed to find out which words occur most often in association with the most frequently occurring words in the tweets, which helps to see the context around these words. The results shows that “cure” and “hydroxychloroquine” occur 29% of the time together. Similarly, “bioweapon” is highly correlated with the words china, Chinese, wuhan, engineered and lab. “immune” is highly correlated with the words system,boost,mask and wear. “bleach” is highly correlated with the words drink  and inject.
+### Count of words in each annotations
+Now let’s examine how the words are distributed among different annotations. A bar chart and pie chart is created to analyse this. The pie chart shows more than 50% of words are generated by 4 annotations named Calling out or correction, conspiracy,politics and sarcasm or satire.  Calling out or correction alone covers 32% of overall data. This indicates that people talk about fake news and remedied and many of the tweets were trying to correct the spread of misinformation.
+
+```{r ,message=FALSE, warning=FALSE}
+# Count of words in each annotations
+data <- covid_tweets %>%
+  group_by(annontation) %>%
+  summarise(total = n()) %>%
+  arrange(desc(total))  %>%
+  mutate(word2 = fct_reorder(annontation, total) ) 
+data %>%
+  ggplot() + 
+  geom_bar( fill="#b8860b", aes(x = word2, y = total, 
+               fill = NULL), stat = "identity")  +
+  theme(plot.title = element_text(hjust = 0.5),
+        legend.title = element_blank(),
+        panel.grid.minor = element_blank()) +
+  ggtitle("Covid-19 tweets by Annotations") +
+  coord_flip() +
+  labs(x = NULL, y = "Count")
+```
+
+
+```{r,message=FALSE, warning=FALSE}
+
+#pie chart for annotations
+# Adding columns 
+data$fraction = data$total / sum(data$total)
+data$percentage = data$total / sum(data$total) * 100
+data$ymax = cumsum(data$fraction)
+data$ymin = c(0, head(data$ymax, n=-1))
+# Rounding the data to two decimal points
+data <- round_df(data, 2)
+# Specify what the legend should say
+Type_of_Tweet <- paste(data$annontation, data$percentage, "%")
+ggplot(data, aes(ymax=ymax, ymin=ymin, xmax=4, xmin=3, fill=Type_of_Tweet)) +
+  geom_rect() +
+  coord_polar(theta="y") + 
+  xlim(c(2, 4)) +
+  theme_void() +
+  theme(legend.position = "right")
+```
+### Top words in 4 different annotations
+```{r,message=FALSE, warning=FALSE}
+#Top words in 4 different annotations
+top <-covid_tweets %>%
+  count(annontation, word, sort = TRUE) %>%
+ group_by(annontation) %>% 
+  slice(seq_len(5)) %>%
+  ungroup() 
+   
+  
+top %>% 
+  filter(annontation %in% c("calling out or correction","conspiracy","politics","true prevention"))%>% 
+  arrange(annontation, n) %>%
+  
+ggplot(aes(x=reorder(word,n), y=n)) +
+  geom_col(aes(fill=annontation), show.legend=FALSE) +
+  facet_wrap(~annontation, scales="free_y") +
+  labs(x="word", y="Frequency") +
+  coord_flip() +
+  theme_bw() 
+```
+Figure shows the most frequent words of the top 4 categories.We can see that the words people, cure and immune are repeating different annotaions. 
+
+## *SENTIMENT ANALYSIS* {.tabset .tabset-fade .tabset-pills}
+Sentiment analysis is done to find the majour sentiments associated with the tweets. Bing, NRC and Afinn lexicons are used here. The table above shows the size and structure of the lexicons afinn. bing and nrc.
+
+```{r,message=FALSE, warning=FALSE}
+#Structure of lexicons
+#define new
+afinn=get_sentiments("afinn")
+
+afinn$lexicon <-"afinn" 
+
+
+afinn <- afinn%>%
+
+mutate( sentiment = ifelse( value >= 0, "positive", "negative"))
+afinn <- select(afinn,-value)
+afinn <-afinn[, c(1,3,2)]
+
+
+bing=get_sentiments("bing")
+bing$lexicon <- "bing"
+nrc=get_sentiments("nrc")
+nrc$lexicon <- "nrc"
+
+#merging dataframe
+new_sentiments <- bind_rows(bing, nrc, afinn)
+
+
+new_sentiments <- new_sentiments %>% 
+  group_by(lexicon) %>%
+  mutate(words_in_lexicon = n_distinct(word)) %>%
+  ungroup()
+
+new_sentiments %>%
+  group_by(lexicon, sentiment, words_in_lexicon) %>%
+  summarise(distinct_words = n_distinct(word)) %>%
+  ungroup() %>%
+  spread(sentiment, distinct_words) %>%
+  mutate(lexicon = color_tile("lightblue", "lightblue")(lexicon),
+         words_in_lexicon = color_bar("lightpink")(words_in_lexicon)) %>%
+  my_kable_styling(caption = "Word Counts Per Lexicon")
+
+
+
+```
+
+In order to find which lexicon is more applicable to our dataset, we can compare the match ratio of each lexicon with our data. The below table shows the NRC lexicon has more of the distinct words from the lyrics than AFINN or Bing. 
+The table belos shows nrc has more matching words than other two. 
+
+```{r,message=FALSE, warning=FALSE}
+#Matching words with the dataset in each lexicons
+covid_tweets %>%
+  mutate(words_in_tweets = n_distinct(word)) %>%
+  inner_join(new_sentiments) %>%
+  group_by(lexicon, words_in_tweets, words_in_lexicon) %>%
+  summarise(lex_match_words = n_distinct(word)) %>%
+  ungroup() %>%
+  mutate(total_match_words = sum(lex_match_words), #Not used but good to have
+         match_ratio = lex_match_words / words_in_tweets) %>%
+  select(lexicon, lex_match_words,  words_in_tweets, match_ratio) %>%
+  mutate(lex_match_words = color_bar("lightpink")(lex_match_words),
+         lexicon = color_tile("lightgreen", "lightgreen")(lexicon)) %>%
+  my_kable_styling(caption = "Words Found In Lexicons")
+```
+
+### NRC and Bing Sentiment distribution
+
+```{r,message=FALSE, warning=FALSE}
+#NRC Sentiment distribution
+covid_bing <- covid_tweets %>%
+  inner_join(get_sentiments("bing"))
+
+covid_nrc <- covid_tweets %>%
+  inner_join(get_sentiments("nrc"))
+
+nrc_plot <- covid_nrc %>%
+  group_by(sentiment) %>%
+  summarise(word_count = n()) %>%
+  ungroup() %>%
+ # mutate(sentiment = reorder(sentiment, word_count)) %>%
+  
+  ggplot(aes(x=reorder(sentiment,word_count),y=word_count)) +
+  geom_point(size = 3, colour = "skyblue", aes(color=)) + 
+  geom_segment(aes(xend = sentiment, yend = 0), size = 1.2, colour = "skyblue")+
+  geom_label(aes(sentiment, word_count+1.5, label = signif(word_count,2)), colour = "darkred", nudge_x = 0.35, size = 4)+
+  labs(y= "Count", x="Sentiment")
+  
+ nrc_plot
+
+
+
+```
+The above plot shows the NRC sentiment analysis result. We see mostly negative emotions in the tweets widely.We can see relatively high positive emotions like anticipation and trust as well. But emotions like surpise ang joy are very less. Whereas negative emotions like fear anger and disgust are high. The bing analysis below also shows the tweets have high negative emotions. 
+
+```{r,message=FALSE, warning=FALSE}
+#bing sentiment analysis
+bing_plot <- covid_bing %>%
+  group_by(sentiment) %>%
+  summarise(word_count = n()) %>%
+  ungroup() %>%
+  mutate(sentiment = reorder(sentiment, word_count)) %>%
+  ggplot(aes(sentiment, word_count, fill = sentiment)) +
+  geom_col() +
+  guides(fill = "none") +
+  labs(x = NULL, y = "Word Count") +
+  scale_y_continuous(limits = c(0, 5000)) +
+  ggtitle("Covid Bing Sentiment") +
+  coord_flip()
+bing_plot
+
+```
+### Top Words associated with NRC and bing sentiments
+```{r,message=FALSE, warning=FALSE}
+# Top Words associated with NRC sentiments
+  covid_nrc %>%
+  count(sentiment, word, sort = TRUE) %>%
+ group_by(sentiment) %>% 
+  slice(seq_len(10)) %>%
+  ungroup() %>%
+  arrange(sentiment, n) %>%
+  mutate(word=fct_reorder(word,n))  %>%
+  ggplot(aes(x=word, y=n)) +
+  geom_col(aes(fill=sentiment), show.legend=FALSE) +
+  facet_wrap(~sentiment, scales="free_y") +
+  labs(x="word", y="Frequency") +
+  coord_flip() +
+  theme_bw()
+```
+The figure shows common words related to the different emotions. fake and kill are the most repeated negative sentiment in the tweets. Whereas vaccine and treat are the positive words.
+
+
+```{r,message=FALSE, warning=FALSE}
+# Top Words associated with bing sentiments
+ covid_bing %>%
+  count(sentiment, word, sort = TRUE) %>%
+  group_by(sentiment) %>% 
+  slice(seq_len(8)) %>%
+  ungroup()  %>%
+  arrange(desc(n)) %>%
+  mutate(word=fct_reorder(word,n))  %>%
+ ggplot(aes(x=word, y=n)) +
+  geom_col(aes(fill=sentiment), show.legend=FALSE) +
+ facet_wrap(~sentiment, scales="free_y") +
+ labs(x="word", y="Frequency") +
+ coord_flip() +
+  theme_bw()
+
+```
+The figure shows common words related to the different emotions using bing lexicons.conspiracy and fake are the most repeated negative sentiment in the tweets. Whereas cure and trump are the positive words. But I think in the bing lexicon word trump is treated as a verb meant surpass, but in real it represents the name Trump. Also the word patient is actually a noun but treated as adjective meant tolerant. So its better to omit these words from analysis.
+
+### Comparison world cloud
+The below figure shows a comparison wordcloud.
+```{r,message=FALSE, warning=FALSE}
+# Comparison world cloud
+covid_bing %>% 
+  count(word, sentiment, sort = TRUE) %>%
+  ungroup()%>%
+  acast(word ~ sentiment, value.var = "n", fill = 0) %>%
+  comparison.cloud(colors = c( "darkorange", "darkgreen"),
+                   max.words = 100)
+```
+```{r,message=FALSE, warning=FALSE}
+#omitiong confusing sentiments 
+custom_stop_words <- tribble(
+  # Column names should match stop_words
+  ~word, ~lexicon,
+  "trump", "CUSTOM",
+  "patient", "CUSTOM",
+  
+  
+)
+
+ covid_tweetsv1<-covid_tweets %>%
+      anti_join(custom_stop_words)
+ 
+ 
+ covid_bingv1 <- covid_tweetsv1 %>%
+  inner_join(get_sentiments("bing"))
+
+covid_nrcv1 <- covid_tweetsv1 %>%
+  inner_join(get_sentiments("nrc"))
+
+```
+
+### Distribution of sentiments in each annotation  
+
+```{r,message=FALSE, warning=FALSE}
+
+# Distribution of sentiments in each annotation
+data_bing <- covid_bingv1 %>%
+  group_by(annontation,sentiment) %>%
+  summarise(total = n()) %>%
+  arrange(desc(total))  %>%
+  mutate(word2 = fct_reorder(sentiment, total) ) 
+
+
+
+ggplot(data_bing, aes(fill=sentiment, y=total, x=reorder(annontation,total))) + 
+   geom_bar(position="stack", stat="identity")+
+ coord_flip()
+```
+### Comparison od positive and negative sentiment distribution in each annotation
+
+pie charts and lollipop charts are created to compare the positive and negative sentiment distribution in each annotations.Calling out or correction, politics and conspiracy are the top3 annotations contributes nehative emotions.Whereas fake cure, commercial activity or promotion anf fake treatment are the top 3 annotations with high number of positive emotions. But it is clear that these are not actual positve emotion but fake ones.
+```{r,message=FALSE, warning=FALSE}
+# Comparison od positive and negative sentiment distribution in each annotation
+data_bing1 <- covid_bingv1 %>%
+  group_by(annontation,sentiment) %>%
+  count() %>%
+  ungroup() %>%
+  mutate(perc = n / sum(n)) %>% 
+  arrange(perc) %>%
+  mutate(labels = scales::percent(perc))
+pos <- data_bing1 %>% 
+  filter(sentiment=="positive")
+neg <- data_bing1 %>% 
+  filter(sentiment=="negative")
+
+plot1 <- ggplot(pos, aes(x = "", y = perc, fill = annontation) )+
+  geom_col() +
+  coord_polar(theta = "y")
+
+plot2 <- ggplot(neg, aes(x = "", y = perc, fill = annontation)) +
+  geom_col() +
+  coord_polar(theta = "y")
+
+
+grid.arrange(plot1, plot2, ncol=1)
+```
+
+
+
+
+```{r,message=FALSE, warning=FALSE}
+# Comparison od positive and negative sentiment distribution in each annotation
+bingnegative <- covid_bingv1 %>% 
+  filter(sentiment == "negative")
+bingpos <- covid_bingv1 %>% 
+  filter(sentiment == "positive")
+
+wordcounts <- covid_tweetsv1 %>%
+  group_by(annontation) %>%
+  summarize(words = n())
+
+neg <- covid_tweetsv1 %>%
+  semi_join(bingnegative) %>%
+  group_by(annontation) %>%
+  summarize(negativewords = n()) %>%
+  left_join(wordcounts, by = c("annontation")) %>%
+  mutate(percent = negativewords/words) %>%
+   arrange(desc(percent)) %>%
+  #slice_max(ratio, n = 1) %>% 
+  ungroup()
+
+pos <- covid_tweetsv1 %>%
+  semi_join(bingpos) %>%
+  group_by(annontation) %>%
+  summarize(positivewords = n()) %>%
+  
+  left_join(wordcounts, by = c("annontation")) %>%
+  mutate(percent = positivewords/words) %>%
+  arrange(desc(percent)) %>%
+  #slice_max(ratio, n = 1) %>% 
+  ungroup()
+
+  
+plot1 <-ggplot(neg,aes(x=reorder(annontation,percent),y=percent)) +
+  geom_point(size = 3, colour = "skyblue") + 
+  geom_segment(aes(xend = annontation, yend = 0), size = 1.2,color="skyblue")+
+  labs(y= "Count", x="Negative")+
+  coord_flip()
+ 
+plot2 <- ggplot(pos,aes(x=reorder(annontation,percent),y=percent)) +
+  geom_point(size = 3, colour = "skyblue") + 
+  geom_segment(aes(xend = annontation, yend = 0), size = 1.2,color="skyblue")+
+  labs(y= "Count", x="Positive")+
+  coord_flip()
+
+grid.arrange(plot1, plot2, ncol=1)
+
+
+```
+### NRC Emotion anlysis by annotations
+```{r,message=FALSE, warning=FALSE}
+# NRC Emotion anlysis by annotations
+data <- covid_nrcv1 %>%
+  group_by(annontation,sentiment) %>%
+  summarise(total = n()) %>%
+  arrange(desc(total))  %>%
+  mutate(word2 = fct_reorder(sentiment, total) ) 
+
+ggplot(data, aes(fill=sentiment, y=total, x=reorder(annontation,total))) + 
+    geom_bar(position="stack", stat="identity")+
+  labs(y= "Count", x="annotations")+
+  theme(axis.text.x = element_text(angle = 90))
+```
+Now we have seen that calling out or correction","politics","conspiracy","sarcasm or satire","false fact or prevention" are the top 5 categories with high number of sentiments associated with. So lets analyse them deeply.
+```{r,message=FALSE, warning=FALSE}
+
+cat1<- covid_bingv1 %>% 
+  filter(annontation == "calling out or correction")
+cat2<- covid_bingv1 %>% 
+  filter(annontation == "politics")
+cat3<- covid_bingv1 %>% 
+  filter(annontation == "conspiracy")
+cat4<- covid_bingv1 %>% 
+  filter(annontation == "sarcasm or satire")
+cat5<- covid_bingv1 %>% 
+  filter(annontation == "false fact or prevention")
+
+
+plot1 <- cat1 %>%
+count(sentiment, word, sort = TRUE) %>%
+ group_by(sentiment) %>% 
+  slice(seq_len(5)) %>%
+  ungroup() %>%
+  arrange(sentiment, n) %>%
+  mutate(word=fct_reorder(word,n))  %>%
+  ggplot(aes(x=word, y=n)) +
+  ggtitle("calling out or correction")+
+  geom_col(aes(fill=sentiment), show.legend=FALSE) +
+  facet_wrap(~sentiment, scales="free_y") +
+  labs(x="word", y="Frequency") +
+  coord_flip() +
+  theme_bw()
+plot2 <- cat2 %>%
+count(sentiment, word, sort = TRUE) %>%
+ group_by(sentiment) %>% 
+  slice(seq_len(5)) %>%
+  ungroup() %>%
+  arrange(sentiment, n) %>%
+  mutate(word=fct_reorder(word,n))  %>%
+  ggplot(aes(x=word, y=n)) +
+  ggtitle("politics")+
+  geom_col(aes(fill=sentiment), show.legend=FALSE) +
+  facet_wrap(~sentiment, scales="free_y") +
+  labs(x="word", y="Frequency") +
+  coord_flip() +
+  theme_bw()
+plot3 <- cat3 %>%
+count(sentiment, word, sort = TRUE) %>%
+ group_by(sentiment) %>% 
+  slice(seq_len(5)) %>%
+  ungroup() %>%
+  arrange(sentiment, n) %>%
+  mutate(word=fct_reorder(word,n))  %>%
+  ggplot(aes(x=word, y=n)) +
+  ggtitle("conspiracy")+
+  geom_col(aes(fill=sentiment), show.legend=FALSE) +
+  facet_wrap(~sentiment, scales="free_y") +
+  labs(x="word", y="Frequency") +
+  coord_flip() +
+  theme_bw()
+plot4 <- cat4 %>%
+count(sentiment, word, sort = TRUE) %>%
+ group_by(sentiment) %>% 
+  slice(seq_len(5)) %>%
+  ungroup() %>%
+  arrange(sentiment, n) %>%
+  mutate(word=fct_reorder(word,n))  %>%
+  ggplot(aes(x=word, y=n)) +
+  ggtitle("sarcasm or satire")+
+  geom_col(aes(fill=sentiment), show.legend=FALSE) +
+  facet_wrap(~sentiment, scales="free_y") +
+  labs(x="word", y="Frequency") +
+  coord_flip() +
+  theme_bw()
+plot5 <- cat5 %>%
+count(sentiment, word, sort = TRUE) %>%
+ group_by(sentiment) %>% 
+  slice(seq_len(5)) %>%
+  ungroup() %>%
+  arrange(sentiment, n) %>%
+  mutate(word=fct_reorder(word,n))  %>%
+  ggplot(aes(x=word, y=n)) +
+  ggtitle("false fact or prevention")+
+  geom_col(aes(fill=sentiment), show.legend=FALSE) +
+  facet_wrap(~sentiment, scales="free_y") +
+  labs(x="word", y="Frequency") +
+  coord_flip() +
+  theme_bw()
+ grid.arrange(plot1, plot2, plot3,plot4,plot5,ncol=2)
+```
+### Polar Sentiment of words
+
+
+
+```{r,message=FALSE, warning=FALSE}
+# Polar Sentiment of words
+AFINN <- get_sentiments("afinn")
+afinn_polar <- covid_tweetsv1 %>%
+  inner_join(AFINN, by = c(word = "word")) %>%
+  count(word, value, sort = TRUE) %>%
+  ungroup()
+
+afinn_polar %>%
+  mutate(contribution = n * value) %>%
+  arrange(desc(abs(contribution))) %>%
+  head(30) %>%
+  mutate(word = reorder(word, contribution)) %>%
+  ggplot(aes(word, n * value, fill = n * value > 0)) +
+  geom_col(show.legend = FALSE) +
+  theme_bw() +
+  xlab("Words ") +
+  ylab("Sentiment score * Number of Occurrences") +
+  ggtitle("Polar Sentiment of Words ") +
+  coord_flip()
+```
+The plot shows polar sentiments scores using afinn lexicon. We can clearly see that negative emotions are higher than positive emotions.
+
+## *TOPIC MODELLING* {.tabset .tabset-fade .tabset-pills}
+
+Now we will do topic modelling by Latent Dirichlet allocation (LDA). LDA is based on the assumption that each document will contain some subset of topics, and that each topic will be associated with a specific subset of words.Since this dataset contains 16 different annotations, we can take number of topics as 16. 
+
+```{r,message=FALSE, warning=FALSE}
+#preparing document ter matrix for LDA
+
+word_counts <- covid_tweetsv1 %>%
+  count(annontation, word, sort = TRUE) %>%
+  ungroup()
+
+covid_dtm <- word_counts %>%
+  cast_dtm(annontation, word, n)
+
+
+```
+
+
+```{r,message=FALSE, warning=FALSE}
+#LDA modelling
+covid_lda <- LDA(covid_dtm, k = 16, control = list(seed = 1234))
+covid_lda
+
+```
+### Word-Topic probabilities
+
+```{r,message=FALSE, warning=FALSE}
+covid_lda_td <- tidy(covid_lda, matrix = "beta")
+covid_lda_td
+```
+The table above shows the probability of a word/term to be present in a particular topic. For example the probability of the word "people" to present in topic 5 is1.8x10^-2 but only 3.14x10^-3 probability of being generated by topic 1.
+
+### Top 5 words in each topics
+```{r,message=FALSE, warning=FALSE}
+#Top terms
+top_terms <- covid_lda_td %>%
+  group_by(topic) %>%
+  slice_max(beta, n = 5) %>%
+  ungroup() %>%
+  arrange(topic, -beta)
+
+top_terms %>%
+  mutate(term = reorder_within(term, beta, topic)) %>%
+  ggplot(aes(beta,term,fill = factor(topic))) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~ topic, scales = "free_y") +
+  scale_y_reordered()
+```
+
+This visualization lets us understand the 17 topics that were extracted from the articles. We can see many words are repeating in many topics. We can remove this from our analysis as future enhancement for getting a better model.
+
+### *Document-topic probabilities*
+We can examine the per-annotation-per-topic probabilities, called (“gamma”), with the matrix = "gamma" argument to tidy().
+
+```{r,message=FALSE, warning=FALSE}
+
+#per document per topic analysis
+covid_lda_gamma <- tidy(covid_lda, matrix = "gamma")
+covid_lda_gamma
+```
+Each of these values is an estimated proportion of words from that document that are generated from that topic. For example, the model estimates that only about 0%(since the gamma value is close to 0) of the words in calling out or correction were generated from topic 1 whereas 99 % of the words in true public health response were generated from topic 1
+
+### Topic distribution of the document calling out or correction
+```{r,message=FALSE, warning=FALSE}
+#Topic distribution of the document calling out or correction
+x <- covid_lda_gamma %>%
+  filter(document=="calling out or correction")
+x
+```
+The gamma values in the above table are an estimated proportion of words from that document that are generated from that topic. For example, the model estimates that each word in the calling out or correction document has 65% probability of coming from topic 6 and 30% chance of coming from topic 14.
+### Gamma probabilties of each topic in each annotation
+
+```{r,message=FALSE, warning=FALSE}
+# Gamma probabilties of each topic in each annotation
+covid_lda_gamma %>%
+  mutate(document = reorder(document, gamma * topic)) %>%
+  ggplot(aes(factor(topic), gamma)) +
+  geom_boxplot() +
+  facet_wrap(~ document) +
+  labs(x = "topic", y = expression(gamma))
+```
+
+FRom the above plot we can say that fake cure,false public health response, true public health response  panic buying ,news, emergency, irrelevant and  were uniquely identified as a single topic each. 
+
+Irrelevantt, fake treatment, calling out or correction,sarcasm or satire, conspiracy and ambigous or hard to clssify were somewhat associated with other topics. We can see that 
+```{r,message=FALSE, warning=FALSE}
+ggplot(covid_lda_gamma, aes(gamma, fill = factor(topic))) +
+  geom_histogram() +
+  facet_wrap(~ document, nrow = 4)
+```
+### Checking for consensus
+```{r,message=FALSE, warning=FALSE}
+# Checking for consensus
+covid_new <- covid_lda_gamma %>%
+  group_by(document) %>%
+  slice_max(gamma) %>%
+  ungroup()
+
+covid_topics <- covid_new %>%
+  count(document, topic) %>%
+  group_by(document) %>%
+  slice_max(n, n = 1) %>% 
+  ungroup() %>%
+  transmute(consensus = document, topic)
+
+covid_new %>%
+  inner_join(covid_topics, by = "topic") %>%
+  filter(document != consensus)
+
+```
+
+This section tries to find out the misclassified topics. we can see that emergency,ambigous or hard to classify,  fake cure, fake treatment, false public health response, irrelevant and panic buying were misclassified. 
+
+### By word assignment
+In the below confusion matrix each row represents the true annotation each word came from, and each column represents what annotation it was assigned to. We notice that emergency, fake cure, fake treatment,false fact or prevention, false public health response, irrelevant and panic buying have a high number of missassigned words.
+```{r,message=FALSE, warning=FALSE}
+# By word assignment
+assignments <- augment(covid_lda, data = covid_dtm)
+assignments <- assignments %>%
+ inner_join(covid_topics, by = c(".topic" = "topic"))
+
+assignments
+library(scales)
+
+assignments %>%
+  count(document, consensus, wt = count) %>%
+  mutate(across(c(document, consensus), ~str_wrap(., 20))) %>%
+  group_by(document) %>%
+  mutate(percent = n / sum(n)) %>%
+  ggplot(aes(consensus, document, fill = percent)) +
+  geom_tile() +
+  scale_fill_gradient2(high = "darkred", label = percent_format()) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1),
+        panel.grid = element_blank()) +
+  labs(x = "Annotations words were assigned to",
+       y = "Annotation words came from",
+       fill = "% of assignments")
+
+```
+
+
+
+```{r,message=FALSE, warning=FALSE}
+
+library(scales)
+
+assignments %>%
+  count(document, consensus, wt = count) %>%
+  mutate(across(c(document, consensus), ~str_wrap(., 20))) %>%
+  group_by(document) %>%
+  mutate(percent = n / sum(n)) %>%
+  ggplot(aes(consensus, document, fill = percent)) +
+  geom_tile() +
+  scale_fill_gradient2(high = "darkred", label = percent_format()) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1),
+        panel.grid = element_blank()) +
+  labs(x = "Annotations words were assigned to",
+       y = "Annotation words came from",
+       fill = "% of assignments")
+```
+### Misassigned words
+The below table shows the misassigned words in each documents.
+
+```{r,message=FALSE, warning=FALSE}
+# Misassigned words
+wrong_words <- assignments %>%
+  filter(document != consensus)
+
+wrong_words
+
+```
+### Misassigned words counts
+The below table shows the number of times a word is misassigned to other document.
+
+```{r,message=FALSE, warning=FALSE}
+#Misassigned words counts
+wrong_words %>%
+  count(document, consensus, term, wt = count) %>%
+  ungroup() %>%
+  arrange(desc(n))
+```
+# *CONCLUSION* {.tabset .tabset-fade .tabset-pills}
+
+In conclusion, the tweets related to Covid 19 largely shows negative sentiments. "COVID”, Coronavirus, “bleach”, “people”, “cure”, "bioweapon", "trump", "hydrochloroquine, conspiracy, mask ,fake and “immune” are the most important words in the tweets. This reflects an overall trend of fake news, fake cure and misinformation spread among the tweets. But a huge amount of correction or callin out words are also visible in the tweets, which is a positive factor. CAlling out or correction, conspiracy anf politics cover more than 60% of overall words in the tweets.Cure, protect, safe and clean are the top positive words wheras conspiracy, fake, and kill are the negative words. The annotation calling out or correction generates the highest number of negative emotions whereas fake cure genrates highest number of negative emotions.  The topic analysis divide the tweets into 17 different categories, but many of the categories are included with misassigned words.  The topics Except emergency,ambigous or hard to classify,  fake cure, fake treatment, false public health response, irrelevant and panic buying were misclassified all other topics are unique. As a future work we can remove these misclassified words and optimize the number of topics.
